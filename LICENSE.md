@@ -1,15 +1,21 @@
-Required Notice: Copyright © 2026 [YOUR NAME OR ENTITY]
+### PolyForm Perimeter License 1.0.0
 
-# Software License
+### Acceptance
 
-This software is made available under the **PolyForm Noncommercial License 1.0.0**:
+By using or distributing this software, you accept this license. 
 
-https://polyformproject.org/licenses/noncommercial/1.0.0
+### Copyright
 
-The licence terms at that URL govern the non-commercial use, modification and distribution of this software.
+The author of this software retains all copyright and intellectual property rights. 
 
-Commercial use is not granted under the public licence. For commercial licensing, contact:
+### Permissions
 
-[YOUR COMMERCIAL LICENSING EMAIL OR WEBSITE]
+You may use, copy, modify, and distribute this software for any purpose, including commercial architecture and professional work, free of charge, subject to the restrictions below. 
 
-This notice is provided in addition to, and does not replace or modify, the PolyForm Noncommercial License 1.0.0.
+### Restrictions
+
+You may not use or distribute this software to provide a competing product or service. You may not sell, rent, or lease this software, nor may you include it as a part of any commercial product or service that you sell to others. 
+
+### No Warranty
+
+This software is provided "as is", without warranty of any kind, express or implied. In no event shall the authors or copyright holders be liable for any claim, damages, or other liability.
