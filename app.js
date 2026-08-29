@@ -1,5 +1,7 @@
 const SVG_NS = "http://www.w3.org/2000/svg";
 const STORAGE_KEY = "room-shape-reconstructor-v2";
+const PROJECT_SCHEMA = "room-shape-reconstructor-project";
+const PROJECT_VERSION = 1;
 
 const directionChoices = [
     ["up-left", "↖"], ["up", "↑"], ["up-right", "↗"], ["right", "→"],
@@ -34,6 +36,9 @@ const anglesList = $("#anglesList");
 const connectionsList = $("#connectionsList");
 const generateButton = $("#generateButton");
 const combinedGraph = $("#combinedGraph");
+const exportProjectButton = $("#exportProjectButton");
+const importProjectButton = $("#importProjectButton");
+const importProjectInput = $("#importProjectInput");
 
 function uid() {
     if (window.crypto?.randomUUID) return crypto.randomUUID();
@@ -85,6 +90,19 @@ function loadRooms() {
 
 function persistRooms() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state.rooms));
+}
+
+function hasMeaningfulDraftData(form = currentFormSnapshot()) {
+    return Boolean(
+        String(form.roomName || "").trim()
+        || form.walls?.some(wall => String(wall.length ?? "").trim() !== "")
+        || form.diagonals?.some(diagonal => diagonal.from !== "" || diagonal.to !== "" || String(diagonal.length ?? "").trim() !== "")
+        || form.rightAngles?.some(angle => angle.corner !== "")
+    );
+}
+
+function updateProjectControls() {
+    exportProjectButton.disabled = !(state.rooms.length || hasMeaningfulDraftData());
 }
 
 function initializeWallCountSelect() {
@@ -226,6 +244,7 @@ function renderWalls() {
         row.append(label, length, direction, tolerance);
         wallsList.appendChild(row);
     });
+    updateProjectControls();
 }
 
 function renderDiagonals() {
@@ -262,6 +281,7 @@ function renderDiagonals() {
         row.append(from, to, length, tolerance, actions);
         diagonalsList.appendChild(row);
     });
+    updateProjectControls();
 }
 
 function renderAngles() {
@@ -290,6 +310,7 @@ function renderAngles() {
         row.append(select, spacer, actions);
         anglesList.appendChild(row);
     });
+    updateProjectControls();
 }
 
 function renderAllInputs() {
@@ -312,17 +333,29 @@ function clearMessages() {
     });
 }
 
-function buildPayload() {
-    const walls = state.walls.map((wall, index) => {
+function buildPayloadFromForm(form) {
+    const wallCount = Number(form.wallCount);
+    if (!Number.isInteger(wallCount) || wallCount < 3 || wallCount > 20) {
+        throw new Error("The project contains an invalid number of walls.");
+    }
+    if (!Array.isArray(form.walls) || form.walls.length !== wallCount) {
+        throw new Error("The number of wall measurements does not match the selected wall count.");
+    }
+
+    const walls = form.walls.map((wall, index) => {
         const length = Number(wall.length);
         if (!Number.isFinite(length) || length <= 0) {
             throw new Error(`Enter a valid positive length for Wall ${index + 1}.`);
         }
-        return { length, tolerance: Number(wall.tolerance) };
+        const tolerance = Number(wall.tolerance);
+        if (!Number.isFinite(tolerance) || tolerance <= 0) {
+            throw new Error(`Wall ${index + 1} has an invalid tolerance.`);
+        }
+        return { length, tolerance };
     });
 
     const diagonals = [];
-    for (const [index, diagonal] of state.diagonals.entries()) {
+    for (const [index, diagonal] of (form.diagonals || []).entries()) {
         const anyValue = diagonal.from !== "" || diagonal.to !== "" || diagonal.length !== "";
         if (!anyValue) continue;
         if (diagonal.from === "" || diagonal.to === "" || diagonal.length === "") {
@@ -332,32 +365,47 @@ function buildPayload() {
         const fromUi = Number(diagonal.from);
         const toUi = Number(diagonal.to);
         const length = Number(diagonal.length);
+        const tolerance = Number(diagonal.tolerance);
         if (!Number.isFinite(length) || length <= 0) throw new Error(`Enter a valid positive length for diagonal ${index + 1}.`);
+        if (!Number.isFinite(tolerance) || tolerance <= 0) throw new Error(`Diagonal ${index + 1} has an invalid tolerance.`);
         if (fromUi === toUi) throw new Error(`Diagonal ${index + 1} must join two different corners.`);
+        if (fromUi < 1 || fromUi > wallCount || toUi < 1 || toUi > wallCount) {
+            throw new Error(`Diagonal ${index + 1} refers to a corner outside the room.`);
+        }
 
         const from = fromUi - 1;
         const to = toUi - 1;
         const a = Math.min(from, to);
         const b = Math.max(from, to);
-        if (b - a === 1 || (a === 0 && b === state.wallCount - 1)) {
+        if (b - a === 1 || (a === 0 && b === wallCount - 1)) {
             throw new Error(`Corner ${a + 1} to Corner ${b + 1} is a wall, not a diagonal.`);
         }
-        diagonals.push({ from, to, length, tolerance: Number(diagonal.tolerance) });
+        diagonals.push({ from, to, length, tolerance });
     }
 
     const rightAngles = [...new Set(
-        state.rightAngles
-            .filter(a => a.corner !== "")
-            .map(a => Number(a.corner) - 1)
+        (form.rightAngles || [])
+            .filter(angle => angle.corner !== "")
+            .map(angle => Number(angle.corner) - 1)
     )];
+    if (rightAngles.some(index => !Number.isInteger(index) || index < 0 || index >= wallCount)) {
+        throw new Error("A confident right angle refers to a corner outside the room.");
+    }
+
+    const direction = directionChoices.some(([key]) => key === form.direction) ? form.direction : "right";
+    const orientation = form.orientation === "ccw" ? "ccw" : "cw";
 
     return {
         walls,
         diagonals,
         right_angles: rightAngles,
-        direction: state.direction,
-        orientation: state.orientation,
+        direction,
+        orientation,
     };
+}
+
+function buildPayload() {
+    return buildPayloadFromForm(currentFormSnapshot());
 }
 
 function currentFormSnapshot() {
@@ -370,6 +418,155 @@ function currentFormSnapshot() {
         orientation: state.orientation,
         roomName: state.roomName,
     };
+}
+
+function normalizeImportedForm(rawForm, fallbackName = "") {
+    if (!rawForm || typeof rawForm !== "object") throw new Error("A room is missing its measurement form.");
+    const inferredCount = Array.isArray(rawForm.walls) ? rawForm.walls.length : 0;
+    const wallCount = Number(rawForm.wallCount || inferredCount);
+    if (!Number.isInteger(wallCount) || wallCount < 3 || wallCount > 20) {
+        throw new Error("A room contains an invalid number of walls.");
+    }
+
+    const sourceWalls = Array.isArray(rawForm.walls) ? rawForm.walls : [];
+    if (sourceWalls.length !== wallCount) throw new Error("A room's wall count does not match its wall measurements.");
+
+    return {
+        wallCount,
+        walls: sourceWalls.map(wall => ({
+            length: wall?.length ?? "",
+            tolerance: Number(wall?.tolerance ?? 0.01),
+        })),
+        diagonals: Array.isArray(rawForm.diagonals) && rawForm.diagonals.length
+            ? rawForm.diagonals.map(diagonal => ({
+                from: diagonal?.from ?? "",
+                to: diagonal?.to ?? "",
+                length: diagonal?.length ?? "",
+                tolerance: Number(diagonal?.tolerance ?? 0.02),
+            }))
+            : [defaultDiagonal()],
+        rightAngles: Array.isArray(rawForm.rightAngles) && rawForm.rightAngles.length
+            ? rawForm.rightAngles.map(angle => ({ corner: angle?.corner ?? "" }))
+            : [defaultRightAngle()],
+        direction: directionChoices.some(([key]) => key === rawForm.direction) ? rawForm.direction : "right",
+        orientation: rawForm.orientation === "ccw" ? "ccw" : "cw",
+        roomName: String(rawForm.roomName || fallbackName || ""),
+    };
+}
+
+function applyFormSnapshot(form, editingRoomId = null) {
+    state.wallCount = form.wallCount;
+    state.walls = deepCopy(form.walls);
+    state.diagonals = deepCopy(form.diagonals.length ? form.diagonals : [defaultDiagonal()]);
+    state.rightAngles = deepCopy(form.rightAngles.length ? form.rightAngles : [defaultRightAngle()]);
+    state.direction = form.direction;
+    state.orientation = form.orientation;
+    state.roomName = form.roomName || "";
+    state.editingRoomId = editingRoomId && state.rooms.some(room => room.id === editingRoomId) ? editingRoomId : null;
+
+    document.querySelector(`input[name="orientation"][value="${state.orientation}"]`).checked = true;
+    if (state.editingRoomId) {
+        const room = state.rooms.find(item => item.id === state.editingRoomId);
+        $("#editingText").textContent = `Editing ${room?.name || state.roomName}`;
+        $("#editingBanner").classList.remove("hidden");
+    } else {
+        $("#editingBanner").classList.add("hidden");
+    }
+    renderAllInputs();
+}
+
+function projectSnapshot() {
+    return {
+        schema: PROJECT_SCHEMA,
+        version: PROJECT_VERSION,
+        exportedAt: new Date().toISOString(),
+        rooms: state.rooms.map(room => ({
+            id: room.id,
+            name: room.name,
+            form: deepCopy(room.form),
+            updatedAt: room.updatedAt || null,
+        })),
+        roomDraft: currentFormSnapshot(),
+        editingRoomId: state.editingRoomId,
+        combineDraft: deepCopy(state.combineDraft),
+        mode: state.mode,
+    };
+}
+
+function exportProject() {
+    if (exportProjectButton.disabled) return;
+    const project = projectSnapshot();
+    const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `room-shape-project-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}
+
+async function importProject(file) {
+    if (!file) return;
+    if (!state.solverReady) throw new Error("The solver is still loading. Try importing again in a moment.");
+
+    const parsed = JSON.parse(await file.text());
+    if (!parsed || parsed.schema !== PROJECT_SCHEMA) throw new Error("This file is not a Room Shape Reconstructor project.");
+    if (Number(parsed.version) !== PROJECT_VERSION) throw new Error(`Project version ${parsed.version} is not supported by this version of the tool.`);
+    if (!Array.isArray(parsed.rooms)) throw new Error("The project file does not contain a valid rooms list.");
+
+    const importedRooms = [];
+    const usedIds = new Set();
+    for (let index = 0; index < parsed.rooms.length; index++) {
+        const sourceRoom = parsed.rooms[index] || {};
+        const form = normalizeImportedForm(sourceRoom.form, sourceRoom.name);
+        const name = String(sourceRoom.name || form.roomName || `Room ${index + 1}`);
+        form.roomName = name;
+        let id = String(sourceRoom.id || uid());
+        if (usedIds.has(id)) id = uid();
+        usedIds.add(id);
+
+        let result;
+        try {
+            result = await solvePayload(buildPayloadFromForm(form));
+        } catch (error) {
+            throw new Error(`${name} could not be regenerated from the imported measurements: ${String(error).replace(/^PythonError:\s*/, "").split("\n").slice(-2).join(" ")}`);
+        }
+        importedRooms.push({
+            id,
+            name,
+            form: { ...form, roomName: name },
+            result,
+            updatedAt: Number(sourceRoom.updatedAt) || Date.now(),
+        });
+    }
+
+    const importedDraft = normalizeImportedForm(parsed.roomDraft || {
+        wallCount: 4,
+        walls: Array.from({ length: 4 }, defaultWall),
+        diagonals: [defaultDiagonal()],
+        rightAngles: [defaultRightAngle()],
+        direction: "right",
+        orientation: "cw",
+        roomName: "",
+    });
+
+    state.rooms = importedRooms;
+    state.combineDraft = Array.isArray(parsed.combineDraft) ? deepCopy(parsed.combineDraft) : [];
+    state.combinedLayout = null;
+    state.mode = "room";
+    persistRooms();
+    $("#combinedResultCard").classList.add("hidden");
+    normalizeCombineDraft();
+
+    const importedEditingId = importedRooms.some(room => room.id === parsed.editingRoomId) ? parsed.editingRoomId : null;
+    applyFormSnapshot(importedDraft, importedEditingId);
+    showRoomEditor();
+    renderSidebar();
+    clearMessages();
+    showMessage($("#formSuccess"), `${importedRooms.length} room${importedRooms.length === 1 ? "" : "s"} imported and regenerated.`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function loadRoomForEdit(roomId) {
@@ -410,6 +607,7 @@ async function initializeSolver() {
         status.textContent = "Solver ready";
         status.className = "status-pill ready";
         generateButton.disabled = false;
+        importProjectButton.disabled = false;
     } catch (error) {
         console.error(error);
         status.textContent = "Solver failed to load";
@@ -774,8 +972,7 @@ function highlightsForRoom(roomId) {
 function renderSidebar() {
     roomsList.innerHTML = "";
     const hasRooms = state.rooms.length > 0;
-    roomsPane.classList.toggle("hidden", !hasRooms);
-    workspace.classList.toggle("has-rooms", hasRooms);
+    $("#roomsEmptyState").classList.toggle("hidden", hasRooms);
 
     state.rooms.forEach((room, index) => {
         const card = document.createElement("article");
@@ -808,6 +1005,7 @@ function renderSidebar() {
     });
 
     $("#combineButton").classList.toggle("hidden", state.rooms.length < 2);
+    updateProjectControls();
 }
 
 function miniButton(symbol, title, handler, extraClass = "") {
@@ -1440,6 +1638,41 @@ $("#backToRoomsButton").addEventListener("click", showRoomEditor);
 $("#generateCombinedButton").addEventListener("click", generateCombinedShape);
 $("#downloadCombinedButton").addEventListener("click", () => {
     if (state.combinedLayout) downloadSvgAsJpg(combinedGraph, "combined-floorplan.jpg");
+});
+
+exportProjectButton.addEventListener("click", exportProject);
+importProjectButton.addEventListener("click", () => importProjectInput.click());
+importProjectInput.addEventListener("change", async () => {
+    const file = importProjectInput.files?.[0];
+    if (!file) return;
+
+    const hasCurrentProject = state.rooms.length || hasMeaningfulDraftData();
+    if (hasCurrentProject && !window.confirm("Importing a project will replace the rooms, connections and current form in this browser. Continue?")) {
+        importProjectInput.value = "";
+        return;
+    }
+
+    importProjectButton.disabled = true;
+    exportProjectButton.disabled = true;
+    try {
+        await importProject(file);
+    } catch (error) {
+        console.error(error);
+        showRoomEditor();
+        clearMessages();
+        showMessage($("#formError"), error.message || "The project could not be imported.");
+    } finally {
+        importProjectInput.value = "";
+        importProjectButton.disabled = !state.solverReady;
+        updateProjectControls();
+    }
+});
+
+document.addEventListener("input", event => {
+    if (event.target.closest?.("#roomEditor")) updateProjectControls();
+});
+document.addEventListener("change", event => {
+    if (event.target.closest?.("#roomEditor")) updateProjectControls();
 });
 
 state.rooms = loadRooms();

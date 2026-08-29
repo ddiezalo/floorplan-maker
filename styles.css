@@ -44,6 +44,23 @@ button {
     margin-bottom: 22px;
 }
 
+.header-actions,
+.project-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.compact-button {
+    padding: 8px 12px;
+    white-space: nowrap;
+}
+
 h1,
 h2,
 h3,
@@ -73,10 +90,6 @@ p {
 }
 
 .workspace {
-    display: block;
-}
-
-.workspace.has-rooms {
     display: grid;
     grid-template-columns: minmax(0, 3fr) minmax(250px, 1fr);
     gap: 18px;
@@ -400,6 +413,13 @@ select:focus {
     gap: 10px;
 }
 
+.rooms-empty-state {
+    padding: 18px 8px;
+    text-align: center;
+    font-size: 0.84rem;
+    color: #8a94a0;
+}
+
 .room-card {
     border: 1px solid #dfe4ea;
     border-radius: 11px;
@@ -633,7 +653,7 @@ select:focus {
 }
 
 @media (max-width: 1050px) {
-    .workspace.has-rooms {
+    .workspace {
         grid-template-columns: minmax(0, 2.2fr) minmax(225px, .8fr);
     }
 
@@ -656,7 +676,16 @@ select:focus {
         flex-direction: column;
     }
 
-    .workspace.has-rooms {
+    .header-actions {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .project-actions {
+        flex-wrap: wrap;
+    }
+
+    .workspace {
         display: flex;
         flex-direction: column;
     }
