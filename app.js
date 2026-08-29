@@ -36,6 +36,7 @@ const anglesList = $("#anglesList");
 const connectionsList = $("#connectionsList");
 const generateButton = $("#generateButton");
 const combinedGraph = $("#combinedGraph");
+const helpDialog = $("#helpDialog");
 const exportProjectButton = $("#exportProjectButton");
 const importProjectButton = $("#importProjectButton");
 const importProjectInput = $("#importProjectInput");
@@ -1638,6 +1639,12 @@ $("#backToRoomsButton").addEventListener("click", showRoomEditor);
 $("#generateCombinedButton").addEventListener("click", generateCombinedShape);
 $("#downloadCombinedButton").addEventListener("click", () => {
     if (state.combinedLayout) downloadSvgAsJpg(combinedGraph, "combined-floorplan.jpg");
+});
+
+$("#helpButton").addEventListener("click", () => helpDialog.showModal());
+$("#closeHelpButton").addEventListener("click", () => helpDialog.close());
+helpDialog.addEventListener("click", event => {
+    if (event.target === helpDialog) helpDialog.close();
 });
 
 exportProjectButton.addEventListener("click", exportProject);

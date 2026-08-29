@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en">
+
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,17 +8,23 @@
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.4/full/pyodide.js"></script>
 </head>
+
 <body>
     <main class="app-shell">
         <header class="app-header">
             <div>
                 <h1>Room Shape Reconstructor</h1>
-                <p>Enter a room's measurements to reconstruct the compatible shape at scale. You can later combine multiple rooms into a single floorplan.</p>
+                <p>Enter a room's measurements to reconstruct the compatible shape at scale. You can later combine
+                    multiple rooms into a single floorplan.</p>
             </div>
             <div class="header-actions">
+                <button id="helpButton" type="button" class="help-button" aria-label="How to use this tool"
+                    title="How to use">?</button>
                 <div class="project-actions">
-                    <button id="exportProjectButton" type="button" class="secondary-button compact-button" disabled>Export project</button>
-                    <button id="importProjectButton" type="button" class="secondary-button compact-button" disabled>Import project</button>
+                    <button id="exportProjectButton" type="button" class="secondary-button compact-button"
+                        disabled>Export project</button>
+                    <button id="importProjectButton" type="button" class="secondary-button compact-button"
+                        disabled>Import project</button>
                     <input id="importProjectInput" type="file" accept="application/json,.json" hidden>
                 </div>
                 <div id="solverStatus" class="status-pill loading">Loading solver…</div>
@@ -55,7 +62,8 @@
                         <div class="section-heading">
                             <div>
                                 <h2>1. Wall measurements</h2>
-                                <p>Corner 1 is fixed at the origin. Choose the direction of the first wall; subsequent corners follow the selected wall order.</p>
+                                <p>Corner 1 is fixed at the origin. Choose the direction of the first wall; subsequent
+                                    corners follow the selected wall order.</p>
                             </div>
                         </div>
                         <div class="column-headings wall-headings">
@@ -71,7 +79,8 @@
                         <div class="section-heading">
                             <div>
                                 <h2>2. Diagonals</h2>
-                                <p>Corners are numbered from 1 in the interface. The solver converts them to zero-based indices internally.</p>
+                                <p>Corners are numbered from 1 in the interface. The solver converts them to zero-based
+                                    indices internally.</p>
                             </div>
                         </div>
                         <div class="column-headings diagonal-headings">
@@ -105,13 +114,16 @@
                     <section class="card">
                         <div class="combine-heading">
                             <div>
-                                <button id="backToRoomsButton" type="button" class="text-button back-button">← Back to room editor</button>
+                                <button id="backToRoomsButton" type="button" class="text-button back-button">← Back to
+                                    room editor</button>
                                 <h2>Combine rooms</h2>
-                                <p>Add whichever room-to-room connections describe the floorplan. Rooms do not need to follow the order shown on the right.</p>
+                                <p>Add whichever room-to-room connections describe the floorplan. Rooms do not need to
+                                    follow the order shown on the right.</p>
                             </div>
                         </div>
                         <div id="connectionsList" class="connections-list"></div>
-                        <button id="addConnectionButton" type="button" class="secondary-button add-connection-button">+ Add Connection</button>
+                        <button id="addConnectionButton" type="button" class="secondary-button add-connection-button">+
+                            Add Connection</button>
                     </section>
                     <div id="combineWarning" class="message warning hidden"></div>
                     <div id="combineError" class="message error hidden"></div>
@@ -134,6 +146,29 @@
             </aside>
         </div>
 
+        <dialog id="helpDialog" class="help-dialog" aria-labelledby="helpTitle">
+            <div class="help-dialog-header">
+                <h2 id="helpTitle">How to use</h2>
+                <button id="closeHelpButton" type="button" class="help-close" aria-label="Close instructions">×</button>
+            </div>
+            <ol class="help-steps">
+                <li><strong>Measure the walls in order.</strong> Choose how many walls there are, select clockwise or
+                    counter-clockwise, then enter each length.</li>
+                <li><strong>Add clues if you have them.</strong> Enter diagonals and corners you are confident are 90°.
+                    They help define irregular rooms.</li>
+                <li><strong>Generate the shape.</strong> The tool finds a compatible geometry, allowing small
+                    measurement errors within your selected tolerances.</li>
+                <li><strong>Add more rooms and combine them if needed.</strong> Choose how two rooms connect, then
+                    select the matching walls and corners. Your selection is highlighted in <strong
+                        style="color: #00dd0080;">green</strong> on each room preview.</li>
+            </ol>
+            <p class="help-tip"><strong>Tip:</strong> Start with the recommended tolerances. Increase one only when that
+                measurement is uncertain or if the calculation fails.</p>
+            <form method="dialog" class="help-dialog-actions">
+                <button class="primary-button" value="close">Got it</button>
+            </form>
+        </dialog>
+
         <section id="combinedResultCard" class="card combined-result-card hidden">
             <div class="result-heading">
                 <div>
@@ -150,4 +185,5 @@
 
     <script src="app.js"></script>
 </body>
+
 </html>
