@@ -27,8 +27,6 @@ const state = {
 };
 
 const $ = selector => document.querySelector(selector);
-const workspace = $("#workspace");
-const roomsPane = $("#roomsPane");
 const roomsList = $("#roomsList");
 const wallsList = $("#wallsList");
 const diagonalsList = $("#diagonalsList");
@@ -62,21 +60,34 @@ function defaultRightAngle() {
     return { corner: "" };
 }
 
+function defaultRoomForm() {
+    return {
+        wallCount: 4,
+        walls: Array.from({ length: 4 }, defaultWall),
+        diagonals: [defaultDiagonal()],
+        rightAngles: [defaultRightAngle()],
+        direction: "right",
+        orientation: "cw",
+        roomName: "",
+    };
+}
+
+function roomById(roomId) {
+    return state.rooms.find(room => room.id === roomId);
+}
+
+function invalidateCombinedResult() {
+    state.combinedLayout = null;
+    $("#combinedResultCard").classList.add("hidden");
+}
+
+function pythonErrorMessage(error) {
+    return String(error).replace(/^PythonError:\s*/, "").split("\n").slice(-2).join(" ");
+}
+
 function resetRoomForm({ keepMessage = false } = {}) {
-    state.wallCount = 4;
-    state.walls = Array.from({ length: state.wallCount }, defaultWall);
-    state.diagonals = [defaultDiagonal()];
-    state.rightAngles = [defaultRightAngle()];
-    state.direction = "right";
-    state.orientation = "cw";
-    state.roomName = "";
-    state.editingRoomId = null;
-    $("#roomName").value = "";
-    $("#wallCount").value = String(state.wallCount);
-    document.querySelector('input[name="orientation"][value="cw"]').checked = true;
-    $("#editingBanner").classList.add("hidden");
     if (!keepMessage) clearMessages();
-    renderAllInputs();
+    applyFormSnapshot(defaultRoomForm());
 }
 
 function loadRooms() {
@@ -245,7 +256,6 @@ function renderWalls() {
         row.append(label, length, direction, tolerance);
         wallsList.appendChild(row);
     });
-    updateProjectControls();
 }
 
 function renderDiagonals() {
@@ -272,17 +282,18 @@ function renderDiagonals() {
                 if (state.diagonals.length === 1) state.diagonals[0] = defaultDiagonal();
                 else state.diagonals.splice(index, 1);
                 renderDiagonals();
+                updateProjectControls();
             },
             () => {
                 state.diagonals.splice(index + 1, 0, defaultDiagonal());
                 renderDiagonals();
+                updateProjectControls();
             },
         );
 
         row.append(from, to, length, tolerance, actions);
         diagonalsList.appendChild(row);
     });
-    updateProjectControls();
 }
 
 function renderAngles() {
@@ -301,17 +312,18 @@ function renderAngles() {
                 if (state.rightAngles.length === 1) state.rightAngles[0] = defaultRightAngle();
                 else state.rightAngles.splice(index, 1);
                 renderAngles();
+                updateProjectControls();
             },
             () => {
                 state.rightAngles.splice(index + 1, 0, defaultRightAngle());
                 renderAngles();
+                updateProjectControls();
             },
         );
 
         row.append(select, spacer, actions);
         anglesList.appendChild(row);
     });
-    updateProjectControls();
 }
 
 function renderAllInputs() {
@@ -320,6 +332,7 @@ function renderAllInputs() {
     renderWalls();
     renderDiagonals();
     renderAngles();
+    updateProjectControls();
 }
 
 function showMessage(element, message) {
@@ -467,7 +480,7 @@ function applyFormSnapshot(form, editingRoomId = null) {
 
     document.querySelector(`input[name="orientation"][value="${state.orientation}"]`).checked = true;
     if (state.editingRoomId) {
-        const room = state.rooms.find(item => item.id === state.editingRoomId);
+        const room = roomById(state.editingRoomId);
         $("#editingText").textContent = `Editing ${room?.name || state.roomName}`;
         $("#editingBanner").classList.remove("hidden");
     } else {
@@ -485,12 +498,10 @@ function projectSnapshot() {
             id: room.id,
             name: room.name,
             form: deepCopy(room.form),
-            updatedAt: room.updatedAt || null,
         })),
         roomDraft: currentFormSnapshot(),
         editingRoomId: state.editingRoomId,
         combineDraft: deepCopy(state.combineDraft),
-        mode: state.mode,
     };
 }
 
@@ -532,65 +543,42 @@ async function importProject(file) {
         try {
             result = await solvePayload(buildPayloadFromForm(form));
         } catch (error) {
-            throw new Error(`${name} could not be regenerated from the imported measurements: ${String(error).replace(/^PythonError:\s*/, "").split("\n").slice(-2).join(" ")}`);
+            throw new Error(`${name} could not be regenerated from the imported measurements: ${pythonErrorMessage(error)}`);
         }
         importedRooms.push({
             id,
             name,
             form: { ...form, roomName: name },
             result,
-            updatedAt: Number(sourceRoom.updatedAt) || Date.now(),
         });
     }
 
-    const importedDraft = normalizeImportedForm(parsed.roomDraft || {
-        wallCount: 4,
-        walls: Array.from({ length: 4 }, defaultWall),
-        diagonals: [defaultDiagonal()],
-        rightAngles: [defaultRightAngle()],
-        direction: "right",
-        orientation: "cw",
-        roomName: "",
-    });
+    const importedDraft = normalizeImportedForm(parsed.roomDraft || defaultRoomForm());
 
     state.rooms = importedRooms;
     state.combineDraft = Array.isArray(parsed.combineDraft) ? deepCopy(parsed.combineDraft) : [];
-    state.combinedLayout = null;
     state.mode = "room";
     persistRooms();
-    $("#combinedResultCard").classList.add("hidden");
+    invalidateCombinedResult();
     normalizeCombineDraft();
 
     const importedEditingId = importedRooms.some(room => room.id === parsed.editingRoomId) ? parsed.editingRoomId : null;
     applyFormSnapshot(importedDraft, importedEditingId);
     showRoomEditor();
-    renderSidebar();
     clearMessages();
     showMessage($("#formSuccess"), `${importedRooms.length} room${importedRooms.length === 1 ? "" : "s"} imported and regenerated.`);
     window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function loadRoomForEdit(roomId) {
-    const room = state.rooms.find(r => r.id === roomId);
+    const room = roomById(roomId);
     if (!room) return;
     const form = deepCopy(room.form);
+    form.roomName ||= room.name;
 
-    state.mode = "room";
-    state.editingRoomId = room.id;
-    state.wallCount = form.wallCount;
-    state.walls = form.walls;
-    state.diagonals = form.diagonals.length ? form.diagonals : [defaultDiagonal()];
-    state.rightAngles = form.rightAngles.length ? form.rightAngles : [defaultRightAngle()];
-    state.direction = form.direction;
-    state.orientation = form.orientation;
-    state.roomName = form.roomName || room.name;
-
-    document.querySelector(`input[name="orientation"][value="${state.orientation}"]`).checked = true;
-    $("#editingText").textContent = `Editing ${room.name}`;
-    $("#editingBanner").classList.remove("hidden");
     clearMessages();
+    applyFormSnapshot(form, room.id);
     showRoomEditor();
-    renderAllInputs();
     window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -652,21 +640,19 @@ async function generateRoom() {
             name,
             form: { ...currentFormSnapshot(), roomName: name },
             result,
-            updatedAt: Date.now(),
         };
 
         if (editingIndex >= 0) state.rooms[editingIndex] = room;
         else state.rooms.push(room);
 
         persistRooms();
-        state.combinedLayout = null;
-        $("#combinedResultCard").classList.add("hidden");
+        invalidateCombinedResult();
         renderSidebar();
         resetRoomForm({ keepMessage: true });
         showMessage($("#formSuccess"), editingIndex >= 0 ? `${name} was updated.` : `${name} was added to your saved rooms.`);
     } catch (error) {
         console.error(error);
-        const message = String(error).replace(/^PythonError:\s*/, "").split("\n").slice(-2).join(" ");
+        const message = pythonErrorMessage(error);
         showMessage($("#formError"), message || "The shape could not be generated from these constraints.");
     } finally {
         generateButton.disabled = false;
@@ -708,7 +694,7 @@ function drawingMetrics(bounds, mini = false) {
     const height = bounds.yMax - bounds.yMin;
     const geometricMean = Math.sqrt(Math.max(width * height, 1));
     const wallWidth = geometricMean * (mini ? 0.008 : 0.0042);
-    const fontSize = geometricMean * 0.020;
+    const fontSize = geometricMean * 0.01;
     return {
         wallWidth,
         diagonalWidth: wallWidth * 0.68,
@@ -717,7 +703,6 @@ function drawingMetrics(bounds, mini = false) {
         highlightWidth: wallWidth * 2.0,
         fontSize,
         angleFontSize: fontSize * 0.78,
-        roomFontSize: fontSize * 1.1,
         sideOffset: fontSize * 0.45,
         angleOffset: fontSize * 1.5,
     };
@@ -736,19 +721,29 @@ function formatAngle(value) {
 }
 
 function addSvgText(svg, x, y, text, options = {}) {
-    const node = svgElement("text", {
+    const haloColor = options.haloColor === undefined ? "white" : options.haloColor;
+    const attrs = {
         x, y,
         "font-size": options.fontSize,
         fill: options.fill || "#111827",
+        "fill-opacity": options.opacity ?? 1,
         "text-anchor": "middle",
         "dominant-baseline": "middle",
         "font-family": "Inter, Arial, sans-serif",
         "font-weight": options.fontWeight || 500,
-        stroke: "white",
-        "stroke-width": options.halo || options.fontSize * 0.34,
-        "paint-order": "stroke",
-        "stroke-linejoin": "round",
-    });
+    };
+    if (haloColor) {
+        Object.assign(attrs, {
+            stroke: haloColor,
+            "stroke-opacity": options.haloOpacity ?? 1,
+            "stroke-width": options.haloWidth ?? options.fontSize * 0.34,
+            "paint-order": "stroke",
+            "stroke-linejoin": "round",
+            "stroke-linecap": "round",
+        });
+    }
+
+    const node = svgElement("text", attrs);
     node.textContent = text;
     if (options.rotation) node.setAttribute("transform", `rotate(${-options.rotation} ${x} ${y})`);
     svg.appendChild(node);
@@ -781,6 +776,10 @@ function drawGrid(svg, bounds, map, metrics) {
     }
 }
 
+function midpoint(a, b) {
+    return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+}
+
 function roomCentroid(vertices) {
     return [
         vertices.reduce((sum, p) => sum + p[0], 0) / vertices.length,
@@ -788,49 +787,81 @@ function roomCentroid(vertices) {
     ];
 }
 
+function wallLabelPoint(room, vertices, index, offset) {
+    const a = vertices[index];
+    const b = vertices[(index + 1) % vertices.length];
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const length = Math.hypot(dx, dy);
+    const [mx, my] = midpoint(a, b);
+    const ccw = room.result.orientation === "ccw";
+    const nx = ccw ? dy / length : -dy / length;
+    const ny = ccw ? -dx / length : dx / length;
+    return [mx + nx * offset, my + ny * offset];
+}
+
+function angleLabelPoint(room, vertices, index, offset) {
+    const n = vertices.length;
+    const ccw = room.result.orientation === "ccw";
+    const prev = vertices[(index - 1 + n) % n];
+    const curr = vertices[index];
+    const next = vertices[(index + 1) % n];
+
+    let ux = prev[0] - curr[0], uy = prev[1] - curr[1];
+    let vx = next[0] - curr[0], vy = next[1] - curr[1];
+    const ul = Math.hypot(ux, uy), vl = Math.hypot(vx, vy);
+    ux /= ul; uy /= ul; vx /= vl; vy /= vl;
+
+    let bx = ux + vx, by = uy + vy;
+    let bl = Math.hypot(bx, by);
+    if (bl < 1e-9) { bx = -uy; by = ux; bl = 1; }
+    bx /= bl; by /= bl;
+
+    const turn = (curr[0] - prev[0]) * (next[1] - curr[1]) - (curr[1] - prev[1]) * (next[0] - curr[0]);
+    const reflex = ccw ? turn < 0 : turn > 0;
+    if (reflex) { bx = -bx; by = -by; }
+    return [curr[0] + bx * offset, curr[1] + by * offset];
+}
+
+function drawDiagonalLine(svg, a, b, map, metrics) {
+    const [x1, y1] = map(a);
+    const [x2, y2] = map(b);
+    svg.appendChild(svgElement("line", {
+        x1, y1, x2, y2,
+        stroke: "#d97706",
+        "stroke-width": metrics.diagonalWidth,
+        "stroke-dasharray": `${metrics.diagonalWidth * 2.4} ${metrics.diagonalWidth * 2.8}`,
+        fill: "none",
+    }));
+}
+
 function drawRoom(svg, room, vertices, bounds, options = {}) {
     const map = worldMapper(bounds);
     const metrics = options.metrics || drawingMetrics(bounds, options.mini);
     const highlights = options.highlights || { walls: new Set(), corners: new Set() };
     const labels = options.labels !== false;
-    const diagonals = options.diagonals !== false;
-    const angles = options.angles !== false;
     const n = vertices.length;
-    const ccw = room.result.orientation === "ccw";
 
     const polygonPoints = vertices.map(p => map(p).join(",")).join(" ");
     svg.appendChild(svgElement("polygon", { points: polygonPoints, fill: "rgba(37,99,235,0.025)", stroke: "none" }));
 
-    if (diagonals) {
-        room.result.diagonals.forEach(diagonal => {
-            const a = vertices[diagonal.from];
-            const b = vertices[diagonal.to];
-            const [x1, y1] = map(a);
-            const [x2, y2] = map(b);
-            svg.appendChild(svgElement("line", {
-                x1, y1, x2, y2,
-                stroke: "#d97706",
-                "stroke-width": metrics.diagonalWidth,
-                "stroke-dasharray": `${metrics.diagonalWidth * 2.4} ${metrics.diagonalWidth * 2.8}`,
-                fill: "none",
-            }));
+    room.result.diagonals.forEach(diagonal => {
+        const a = vertices[diagonal.from];
+        const b = vertices[diagonal.to];
+        drawDiagonalLine(svg, a, b, map, metrics);
 
-            if (labels) {
-                const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-                const [tx, ty] = map(mid);
-                addSvgText(svg, tx, ty, diagonal.fitted.toFixed(1), {
-                    fontSize: metrics.fontSize,
-                    fill: "#b45309",
-                    rotation: readableAngle(a, b),
-                });
-            }
-        });
-    }
+        if (labels) {
+            const [tx, ty] = map(midpoint(a, b));
+            addSvgText(svg, tx, ty, diagonal.fitted.toFixed(1), {
+                fontSize: metrics.fontSize,
+                fill: "#b45309",
+                rotation: readableAngle(a, b),
+            });
+        }
+    });
 
     for (let i = 0; i < n; i++) {
-        const j = (i + 1) % n;
         const a = vertices[i];
-        const b = vertices[j];
+        const b = vertices[(i + 1) % n];
         const [x1, y1] = map(a);
         const [x2, y2] = map(b);
         const highlighted = highlights.walls?.has(i);
@@ -843,14 +874,7 @@ function drawRoom(svg, room, vertices, bounds, options = {}) {
         }));
 
         if (labels) {
-            const dx = b[0] - a[0];
-            const dy = b[1] - a[1];
-            const length = Math.hypot(dx, dy);
-            const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-            const nx = ccw ? dy / length : -dy / length;
-            const ny = ccw ? -dx / length : dx / length;
-            const labelWorld = [mid[0] + nx * metrics.sideOffset, mid[1] + ny * metrics.sideOffset];
-            const [tx, ty] = map(labelWorld);
+            const [tx, ty] = map(wallLabelPoint(room, vertices, i, metrics.sideOffset));
             addSvgText(svg, tx, ty, room.result.sides[i].fitted.toFixed(1), {
                 fontSize: metrics.fontSize,
                 rotation: readableAngle(a, b),
@@ -858,23 +882,9 @@ function drawRoom(svg, room, vertices, bounds, options = {}) {
         }
     }
 
-    if (angles && labels) {
+    if (labels) {
         for (let i = 0; i < n; i++) {
-            const prev = vertices[(i - 1 + n) % n];
-            const curr = vertices[i];
-            const next = vertices[(i + 1) % n];
-            let ux = prev[0] - curr[0], uy = prev[1] - curr[1];
-            let vx = next[0] - curr[0], vy = next[1] - curr[1];
-            const ul = Math.hypot(ux, uy), vl = Math.hypot(vx, vy);
-            ux /= ul; uy /= ul; vx /= vl; vy /= vl;
-            let bx = ux + vx, by = uy + vy;
-            let bl = Math.hypot(bx, by);
-            if (bl < 1e-9) { bx = -uy; by = ux; bl = 1; }
-            bx /= bl; by /= bl;
-            const turn = (curr[0] - prev[0]) * (next[1] - curr[1]) - (curr[1] - prev[1]) * (next[0] - curr[0]);
-            const reflex = ccw ? turn < 0 : turn > 0;
-            if (reflex) { bx = -bx; by = -by; }
-            const [tx, ty] = map([curr[0] + bx * metrics.angleOffset, curr[1] + by * metrics.angleOffset]);
+            const [tx, ty] = map(angleLabelPoint(room, vertices, i, metrics.angleOffset));
             addSvgText(svg, tx, ty, formatAngle(room.result.angles[i]), { fontSize: metrics.angleFontSize });
         }
     }
@@ -889,11 +899,6 @@ function drawRoom(svg, room, vertices, bounds, options = {}) {
             stroke: highlighted ? "white" : "none",
             "stroke-width": highlighted ? metrics.wallWidth * 0.65 : 0,
         }));
-    }
-
-    if (options.roomLabel) {
-        const [cx, cy] = map(roomCentroid(vertices));
-        addSvgText(svg, cx, cy, room.name, { fontSize: metrics.roomFontSize, fontWeight: 750 });
     }
 }
 
@@ -910,7 +915,7 @@ function createRoomSvg(room, { mini = false, highlights = null, labels = true } 
     svg.style.background = "white";
     const metrics = drawingMetrics(bounds, mini);
     drawGrid(svg, bounds, worldMapper(bounds), metrics);
-    drawRoom(svg, room, vertices, bounds, { mini, highlights, labels, angles: labels, metrics });
+    drawRoom(svg, room, vertices, bounds, { mini, highlights, labels, metrics });
     return svg;
 }
 
@@ -1052,8 +1057,7 @@ function attachDragHandlers(card) {
         const [moved] = state.rooms.splice(fromIndex, 1);
         state.rooms.splice(toIndex, 0, moved);
         persistRooms();
-        state.combinedLayout = null;
-        $("#combinedResultCard").classList.add("hidden");
+        invalidateCombinedResult();
         if (state.mode === "combine") initializeCombineDraft();
         renderSidebar();
         if (state.mode === "combine") renderConnections();
@@ -1061,14 +1065,13 @@ function attachDragHandlers(card) {
 }
 
 function removeRoom(roomId) {
-    const room = state.rooms.find(r => r.id === roomId);
+    const room = roomById(roomId);
     if (!room) return;
     if (!window.confirm(`Remove ${room.name}?`)) return;
     state.rooms = state.rooms.filter(r => r.id !== roomId);
     persistRooms();
     if (state.editingRoomId === roomId) resetRoomForm();
-    state.combinedLayout = null;
-    $("#combinedResultCard").classList.add("hidden");
+    invalidateCombinedResult();
     if (state.rooms.length < 2 && state.mode === "combine") showRoomEditor();
     else if (state.mode === "combine") initializeCombineDraft();
     renderSidebar();
@@ -1103,8 +1106,8 @@ function wallEndpoints(room, wallIndex) {
 }
 
 function defaultConnection(roomAId = null, roomBId = null) {
-    const roomA = state.rooms.find(room => room.id === roomAId) || state.rooms[0];
-    const roomB = state.rooms.find(room => room.id === roomBId)
+    const roomA = roomById(roomAId) || state.rooms[0];
+    const roomB = roomById(roomBId)
         || state.rooms.find(room => room.id !== roomA?.id)
         || state.rooms[1];
 
@@ -1121,8 +1124,8 @@ function defaultConnection(roomAId = null, roomBId = null) {
 }
 
 function normalizeConnection(connection) {
-    const roomA = state.rooms.find(room => room.id === connection.roomAId);
-    const roomB = state.rooms.find(room => room.id === connection.roomBId);
+    const roomA = roomById(connection.roomAId);
+    const roomB = roomById(connection.roomBId);
     if (!roomA || !roomB || roomA.id === roomB.id) return false;
 
     const maxWallA = roomA.result.vertices.length - 1;
@@ -1134,7 +1137,7 @@ function normalizeConnection(connection) {
     const endpointsB = wallEndpoints(roomB, connection.wallB);
     if (!endpointsA.includes(connection.cornerA)) connection.cornerA = endpointsA[0];
     if (!endpointsB.includes(connection.cornerB)) connection.cornerB = endpointsB[0];
-    if (!['parallel', 'perpendicular'].includes(connection.mode)) connection.mode = 'parallel';
+    if (!["parallel", "perpendicular"].includes(connection.mode)) connection.mode = "parallel";
     if (connection.thickness === undefined || connection.thickness === null) connection.thickness = 0;
     return true;
 }
@@ -1152,14 +1155,14 @@ function initializeCombineDraft() {
 
 function addConnection() {
     if (state.rooms.length < 2) return;
-    const usedPairs = new Set(state.combineDraft.map(connection => [connection.roomAId, connection.roomBId].sort().join('|')));
+    const usedPairs = new Set(state.combineDraft.map(connection => [connection.roomAId, connection.roomBId].sort().join("|")));
     let roomA = state.rooms[0];
     let roomB = state.rooms[1];
 
     outer:
     for (let i = 0; i < state.rooms.length; i++) {
         for (let j = i + 1; j < state.rooms.length; j++) {
-            const key = [state.rooms[i].id, state.rooms[j].id].sort().join('|');
+            const key = [state.rooms[i].id, state.rooms[j].id].sort().join("|");
             if (!usedPairs.has(key)) {
                 roomA = state.rooms[i];
                 roomB = state.rooms[j];
@@ -1174,10 +1177,10 @@ function addConnection() {
 }
 
 function roomSelect(value, excludeId = null) {
-    const select = document.createElement('select');
+    const select = document.createElement("select");
     state.rooms.forEach((room, index) => {
         if (room.id === excludeId) return;
-        const option = document.createElement('option');
+        const option = document.createElement("option");
         option.value = room.id;
         option.textContent = `${index + 1}. ${room.name}`;
         if (room.id === value) option.selected = true;
@@ -1257,17 +1260,17 @@ function analyzeConnectionGroups() {
     const firstGroupIds = components[0] || [];
     const otherComponents = components.slice(1);
     const unconnectedIds = state.rooms.filter(room => !connectedRoomIds.has(room.id)).map(room => room.id);
-    const roomName = id => state.rooms.find(room => room.id === id)?.name || 'Unknown room';
+    const roomName = id => roomById(id)?.name || "Unknown room";
     const warnings = [];
 
     if (otherComponents.length) {
-        warnings.push(`Only the first connected group will be plotted (${firstGroupIds.map(roomName).join(', ')}). Independent connected group${otherComponents.length > 1 ? 's' : ''} omitted: ${otherComponents.map(group => group.map(roomName).join(' + ')).join('; ')}.`);
+        warnings.push(`Only the first connected group will be plotted (${firstGroupIds.map(roomName).join(", ")}). Independent connected group${otherComponents.length > 1 ? "s" : ""} omitted: ${otherComponents.map(group => group.map(roomName).join(" + ")).join("; ")}.`);
     }
     if (unconnectedIds.length) {
-        warnings.push(`Unconnected room${unconnectedIds.length > 1 ? 's' : ''} omitted: ${unconnectedIds.map(roomName).join(', ')}.`);
+        warnings.push(`Unconnected room${unconnectedIds.length > 1 ? "s" : ""} omitted: ${unconnectedIds.map(roomName).join(", ")}.`);
     }
 
-    return { connections, components, firstGroupIds, otherComponents, unconnectedIds, warningText: warnings.join(' ') };
+    return { connections, firstGroupIds, warningText: warnings.join(" ") };
 }
 
 function updateCombineWarning() {
@@ -1275,8 +1278,8 @@ function updateCombineWarning() {
     const analysis = analyzeConnectionGroups();
     if (analysis.warningText) showMessage(warning, analysis.warningText);
     else {
-        warning.textContent = '';
-        warning.classList.add('hidden');
+        warning.textContent = "";
+        warning.classList.add("hidden");
     }
 }
 
@@ -1285,8 +1288,8 @@ function renderConnections() {
     connectionsList.innerHTML = "";
 
     state.combineDraft.forEach((connection, index) => {
-        const roomA = state.rooms.find(room => room.id === connection.roomAId);
-        const roomB = state.rooms.find(room => room.id === connection.roomBId);
+        const roomA = roomById(connection.roomAId);
+        const roomB = roomById(connection.roomBId);
         if (!roomA || !roomB) return;
 
         const card = document.createElement("div");
@@ -1294,15 +1297,15 @@ function renderConnections() {
 
         const title = document.createElement("div");
         title.className = "connection-title";
-        const heading = document.createElement('h3');
+        const heading = document.createElement("h3");
         heading.textContent = `Connection ${index + 1}`;
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'icon-button remove connection-remove';
-        remove.title = 'Remove connection';
-        remove.setAttribute('aria-label', 'Remove connection');
-        remove.textContent = '×';
-        remove.addEventListener('click', () => {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "icon-button remove connection-remove";
+        remove.title = "Remove connection";
+        remove.setAttribute("aria-label", "Remove connection");
+        remove.textContent = "×";
+        remove.addEventListener("click", () => {
             state.combineDraft.splice(index, 1);
             renderConnections();
             renderSidebar();
@@ -1313,27 +1316,27 @@ function renderConnections() {
         rows.className = "connection-rows";
 
         // Row 1: both rooms + connection type.
-        const roomRow = document.createElement('div');
-        roomRow.className = 'connection-row rooms';
+        const roomRow = document.createElement("div");
+        roomRow.className = "connection-row rooms";
 
-        const roomAField = connectionField('Room');
+        const roomAField = connectionField("Room");
         const roomASelect = roomSelect(roomA.id, roomB.id);
-        roomASelect.addEventListener('change', () => {
+        roomASelect.addEventListener("change", () => {
             connection.roomAId = roomASelect.value;
             connection.wallA = 0;
-            const selectedRoom = state.rooms.find(room => room.id === connection.roomAId);
+            const selectedRoom = roomById(connection.roomAId);
             connection.cornerA = wallEndpoints(selectedRoom, 0)[0];
             renderConnections();
             renderSidebar();
         });
         roomAField.appendChild(roomASelect);
 
-        const roomBField = connectionField('Room connected to');
+        const roomBField = connectionField("Room connected to");
         const roomBSelect = roomSelect(roomB.id, roomA.id);
-        roomBSelect.addEventListener('change', () => {
+        roomBSelect.addEventListener("change", () => {
             connection.roomBId = roomBSelect.value;
             connection.wallB = 0;
-            const selectedRoom = state.rooms.find(room => room.id === connection.roomBId);
+            const selectedRoom = roomById(connection.roomBId);
             connection.cornerB = wallEndpoints(selectedRoom, 0)[0];
             renderConnections();
             renderSidebar();
@@ -1355,8 +1358,8 @@ function renderConnections() {
         roomRow.append(roomAField, roomBField, modeField);
 
         // Row 2: selected walls side by side.
-        const wallRow = document.createElement('div');
-        wallRow.className = 'connection-row pair';
+        const wallRow = document.createElement("div");
+        wallRow.className = "connection-row pair";
         const wallAField = connectionField(`Wall from ${roomA.name}`);
         const wallA = wallSelect(roomA, connection.wallA);
         wallA.addEventListener("change", () => {
@@ -1379,8 +1382,8 @@ function renderConnections() {
         wallRow.append(wallAField, wallBField);
 
         // Row 3: selected touching corners side by side.
-        const cornerRow = document.createElement('div');
-        cornerRow.className = 'connection-row pair';
+        const cornerRow = document.createElement("div");
+        cornerRow.className = "connection-row pair";
         const cornerAField = connectionField(`Touching corner from ${roomA.name}`);
         const cornerA = endpointCornerSelect(roomA, connection.wallA, connection.cornerA);
         connection.cornerA = Number(cornerA.value);
@@ -1400,8 +1403,8 @@ function renderConnections() {
         cornerBField.appendChild(cornerB);
         cornerRow.append(cornerAField, cornerBField);
 
-        const thicknessRow = document.createElement('div');
-        thicknessRow.className = 'connection-row single';
+        const thicknessRow = document.createElement("div");
+        thicknessRow.className = "connection-row single";
         const thicknessField = connectionField("Thickness of division (cm)");
         const thickness = document.createElement("input");
         thickness.type = "number";
@@ -1534,7 +1537,7 @@ function buildCombinedLayout() {
 
     const groupIds = new Set(analysis.firstGroupIds);
     const groupConnections = analysis.connections.filter(connection => groupIds.has(connection.roomAId) && groupIds.has(connection.roomBId));
-    const firstRoom = state.rooms.find(room => room.id === analysis.firstGroupIds[0]);
+    const firstRoom = roomById(analysis.firstGroupIds[0]);
     const placements = new Map([[firstRoom.id, deepCopy(firstRoom.result.vertices)]]);
     const usedConnections = new Set();
 
@@ -1546,16 +1549,10 @@ function buildCombinedLayout() {
             const bPlaced = placements.has(connection.roomBId);
             if (aPlaced === bPlaced) continue;
 
-            if (aPlaced) {
-                const roomA = state.rooms.find(room => room.id === connection.roomAId);
-                const roomB = state.rooms.find(room => room.id === connection.roomBId);
-                placements.set(roomB.id, placeNextRoom(roomA, placements.get(roomA.id), roomB, connection));
-            } else {
-                const reversed = reverseConnection(connection);
-                const roomA = state.rooms.find(room => room.id === reversed.roomAId);
-                const roomB = state.rooms.find(room => room.id === reversed.roomBId);
-                placements.set(roomB.id, placeNextRoom(roomA, placements.get(roomA.id), roomB, reversed));
-            }
+            const oriented = aPlaced ? connection : reverseConnection(connection);
+            const roomA = roomById(oriented.roomAId);
+            const roomB = roomById(oriented.roomBId);
+            placements.set(roomB.id, placeNextRoom(roomA, placements.get(roomA.id), roomB, oriented));
             usedConnections.add(index);
             progress = true;
         }
@@ -1570,26 +1567,250 @@ function buildCombinedLayout() {
     return { layout, analysis, cycleCount };
 }
 
+const COMBINED_ROOM_COLORS = [
+    "#2563eb", "#dc2626", "#16a34a", "#9333ea", "#0891b2", "#ca8a04",
+    "#db2777", "#4f46e5", "#059669", "#ea580c", "#7c3aed", "#0f766e",
+];
+
+function combinedRoomColor(index) {
+    if (index < COMBINED_ROOM_COLORS.length) return COMBINED_ROOM_COLORS[index];
+    const hue = Math.round((index * 137.508) % 360);
+    return `hsl(${hue} 68% 43%)`;
+}
+
+function formatCombinedAngle(value) {
+    const rounded = Math.round(Number(value) * 2) / 2;
+    return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}º`;
+}
+
+function formatCombinedMeasure(value) {
+    const rounded = Math.round(Number(value) * 10) / 10;
+    return Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1);
+}
+
+function drawCombinedWallLines(svg, layout, bounds, metrics) {
+    const map = worldMapper(bounds);
+    layout.forEach((item, roomIndex) => {
+        const color = combinedRoomColor(roomIndex);
+        const vertices = item.vertices;
+        for (let i = 0; i < vertices.length; i++) {
+            const [x1, y1] = map(vertices[i]);
+            const [x2, y2] = map(vertices[(i + 1) % vertices.length]);
+            svg.appendChild(svgElement("line", {
+                x1, y1, x2, y2,
+                stroke: color,
+                "stroke-width": metrics.wallWidth * 1.15,
+                "stroke-linejoin": "round",
+                "stroke-linecap": "round",
+            }));
+        }
+    });
+}
+
+function drawCombinedDiagonalLines(svg, layout, bounds, metrics) {
+    const map = worldMapper(bounds);
+    layout.forEach(item => {
+        item.room.result.diagonals.forEach(diagonal => {
+            drawDiagonalLine(svg, item.vertices[diagonal.from], item.vertices[diagonal.to], map, metrics);
+        });
+    });
+}
+
+function drawCombinedAngleLabels(svg, layout, bounds, metrics) {
+    const map = worldMapper(bounds);
+    layout.forEach(item => {
+        for (let i = 0; i < item.vertices.length; i++) {
+            const [tx, ty] = map(angleLabelPoint(item.room, item.vertices, i, metrics.angleOffset));
+            addSvgText(svg, tx, ty, formatCombinedAngle(item.room.result.angles[i]), {
+                fontSize: metrics.angleFontSize,
+                fill: "#6b7280",
+                opacity: 0.5,
+                haloColor: null,
+            });
+        }
+    });
+}
+
+function drawCombinedDiagonalMeasures(svg, layout, bounds, metrics) {
+    const map = worldMapper(bounds);
+    layout.forEach(item => {
+        item.room.result.diagonals.forEach(diagonal => {
+            const a = item.vertices[diagonal.from];
+            const b = item.vertices[diagonal.to];
+            const [tx, ty] = map(midpoint(a, b));
+            addSvgText(svg, tx, ty, formatCombinedMeasure(diagonal.fitted), {
+                fontSize: metrics.fontSize,
+                fill: "#d97706",
+                haloColor: "white",
+                haloOpacity: 0.4,
+                haloWidth: metrics.fontSize * 0.42,
+                rotation: readableAngle(a, b),
+            });
+        });
+    });
+}
+
+function drawCombinedWallMeasures(svg, layout, bounds, metrics) {
+    const map = worldMapper(bounds);
+    layout.forEach((item, roomIndex) => {
+        const room = item.room;
+        const vertices = item.vertices;
+        // const wallColor = combinedRoomColor(roomIndex);
+        for (let i = 0; i < vertices.length; i++) {
+            const a = vertices[i];
+            const b = vertices[(i + 1) % vertices.length];
+            const [tx, ty] = map(wallLabelPoint(room, vertices, i, 0));                     // Set metrics.sideOffset = 0
+            addSvgText(svg, tx, ty, formatCombinedMeasure(room.result.sides[i].fitted), {
+                fontSize: metrics.fontSize,
+                fill: "#000000",
+                haloColor: "white",
+                haloOpacity: 0.4,
+                haloWidth: metrics.fontSize * 0.42,
+                rotation: readableAngle(a, b),
+            });
+        }
+    });
+}
+
+function legendEntryWidth(name, metrics) {
+    return metrics.swatchLength + metrics.textGap + name.length * metrics.fontSize * 0.58;
+}
+
+function buildCombinedLegendLayout(layout, plotWidth, plotHeight, metrics) {
+    const legendMetrics = {
+        fontSize: metrics.fontSize * 0.82,
+        lineHeight: metrics.fontSize * 1.35,
+        swatchLength: metrics.fontSize * 1.8,
+        textGap: metrics.fontSize * 0.55,
+        padding: metrics.fontSize * 0.8,
+        itemGap: metrics.fontSize * 1.4,
+        plotGap: metrics.fontSize * 1.4,
+    };
+    const entries = layout.map((item, index) => ({
+        name: item.room.name,
+        color: combinedRoomColor(index),
+    }));
+
+    if (plotWidth < plotHeight) {
+        const maxEntryWidth = Math.max(...entries.map(entry => legendEntryWidth(entry.name, legendMetrics)), 0);
+        const legendWidth = legendMetrics.padding * 2 + maxEntryWidth;
+        const legendHeight = legendMetrics.padding * 2 + entries.length * legendMetrics.lineHeight;
+        return {
+            orientation: "right",
+            legendMetrics,
+            entries,
+            totalWidth: plotWidth + legendMetrics.plotGap + legendWidth,
+            totalHeight: Math.max(plotHeight, legendHeight),
+            plotX: 0,
+            plotY: 0,
+            legendX: plotWidth + legendMetrics.plotGap,
+            legendY: 0,
+        };
+    }
+
+    const entryWidths = entries.map(entry => legendEntryWidth(entry.name, legendMetrics));
+    const totalWidth = Math.max(plotWidth, Math.max(...entryWidths, 0) + legendMetrics.padding * 2);
+    const availableWidth = totalWidth - legendMetrics.padding * 2;
+    const rows = [];
+    let row = [];
+    let rowWidth = 0;
+
+    entries.forEach((entry, index) => {
+        const width = entryWidths[index];
+        const added = row.length ? legendMetrics.itemGap + width : width;
+        if (row.length && rowWidth + added > availableWidth) {
+            rows.push({ entries: row, width: rowWidth });
+            row = [];
+            rowWidth = 0;
+        }
+        row.push({ ...entry, width });
+        rowWidth += row.length > 1 ? legendMetrics.itemGap + width : width;
+    });
+    if (row.length) rows.push({ entries: row, width: rowWidth });
+
+    const legendHeight = legendMetrics.padding * 2 + rows.length * legendMetrics.lineHeight;
+    return {
+        orientation: "top",
+        legendMetrics,
+        rows,
+        totalWidth,
+        totalHeight: legendHeight + legendMetrics.plotGap + plotHeight,
+        plotX: (totalWidth - plotWidth) / 2,
+        plotY: legendHeight + legendMetrics.plotGap,
+        legendX: 0,
+        legendY: 0,
+    };
+}
+
+function drawLegendEntry(svg, entry, x, y, metrics) {
+    const x2 = x + metrics.swatchLength;
+    svg.appendChild(svgElement("line", {
+        x1: x, y1: y, x2, y2: y,
+        stroke: entry.color,
+        "stroke-width": Math.max(metrics.fontSize * 0.18, 1),
+        "stroke-linecap": "round",
+    }));
+    const text = svgElement("text", {
+        x: x2 + metrics.textGap,
+        y,
+        "font-size": metrics.fontSize,
+        fill: "#374151",
+        "text-anchor": "start",
+        "dominant-baseline": "middle",
+        "font-family": "Inter, Arial, sans-serif",
+        "font-weight": 600,
+    });
+    text.textContent = entry.name;
+    svg.appendChild(text);
+}
+
+function drawCombinedLegend(svg, legendLayout) {
+    const metrics = legendLayout.legendMetrics;
+
+    if (legendLayout.orientation === "right") {
+        legendLayout.entries.forEach((entry, index) => {
+            const x = legendLayout.legendX + metrics.padding;
+            const y = legendLayout.legendY + metrics.padding + metrics.lineHeight * (index + 0.5);
+            drawLegendEntry(svg, entry, x, y, metrics);
+        });
+        return;
+    }
+
+    legendLayout.rows.forEach((row, rowIndex) => {
+        let x = legendLayout.totalWidth - metrics.padding - row.width;
+        const y = legendLayout.legendY + metrics.padding + metrics.lineHeight * (rowIndex + 0.5);
+        row.entries.forEach(entry => {
+            drawLegendEntry(svg, entry, x, y, metrics);
+            x += entry.width + metrics.itemGap;
+        });
+    });
+}
+
 function renderCombined(layout) {
     combinedGraph.innerHTML = "";
     const bounds = boundsForMany(layout.map(item => item.vertices), 50);
-    const width = bounds.xMax - bounds.xMin;
-    const height = bounds.yMax - bounds.yMin;
-    combinedGraph.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    combinedGraph.setAttribute("preserveAspectRatio", "xMidYMid meet");
-    combinedGraph.style.aspectRatio = `${width} / ${height}`;
+    const plotWidth = bounds.xMax - bounds.xMin;
+    const plotHeight = bounds.yMax - bounds.yMin;
     const metrics = drawingMetrics(bounds, false);
-    drawGrid(combinedGraph, bounds, worldMapper(bounds), metrics);
+    const legendLayout = buildCombinedLegendLayout(layout, plotWidth, plotHeight, metrics);
 
-    layout.forEach(item => {
-        drawRoom(combinedGraph, item.room, item.vertices, bounds, {
-            labels: true,
-            angles: true,
-            diagonals: true,
-            roomLabel: true,
-            metrics,
-        });
+    combinedGraph.setAttribute("viewBox", `0 0 ${legendLayout.totalWidth} ${legendLayout.totalHeight}`);
+    combinedGraph.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    combinedGraph.style.aspectRatio = `${legendLayout.totalWidth} / ${legendLayout.totalHeight}`;
+
+    const plotGroup = svgElement("g", {
+        transform: `translate(${legendLayout.plotX} ${legendLayout.plotY})`,
     });
+    combinedGraph.appendChild(plotGroup);
+
+    // Explicit plot layer order, bottom to top.
+    drawCombinedDiagonalLines(plotGroup, layout, bounds, metrics);
+    drawCombinedDiagonalMeasures(plotGroup, layout, bounds, metrics);
+    drawCombinedWallLines(plotGroup, layout, bounds, metrics);
+    drawCombinedAngleLabels(plotGroup, layout, bounds, metrics);
+    drawCombinedWallMeasures(plotGroup, layout, bounds, metrics);
+
+    drawCombinedLegend(combinedGraph, legendLayout);
 }
 
 function generateCombinedShape() {
@@ -1599,10 +1820,10 @@ function generateCombinedShape() {
         state.combinedLayout = combined.layout;
         renderCombined(combined.layout);
 
-        const messages = [`${combined.layout.length} connected room${combined.layout.length === 1 ? '' : 's'} plotted.`];
+        const messages = [`${combined.layout.length} connected room${combined.layout.length === 1 ? "" : "s"} plotted.`];
         if (combined.analysis.warningText) messages.push(combined.analysis.warningText);
-        if (combined.cycleCount) messages.push(`${combined.cycleCount} additional connection${combined.cycleCount === 1 ? '' : 's'} formed a cycle and did not reposition rooms that were already placed.`);
-        $("#combinedSummary").textContent = messages.join(' ');
+        if (combined.cycleCount) messages.push(`${combined.cycleCount} additional connection${combined.cycleCount === 1 ? "" : "s"} formed a cycle and did not reposition rooms that were already placed.`);
+        $("#combinedSummary").textContent = messages.join(" ");
         $("#combinedResultCard").classList.remove("hidden");
         $("#combinedResultCard").scrollIntoView({ behavior: "smooth", block: "start" });
         updateCombineWarning();
